@@ -134,12 +134,16 @@ metrics = {
 def nvme_has_verbose():
     """
     Old nvme-cli versions like 2.3 on Debian 12 don't have --verbose for smart-log command
+    We need to check if --verbose is supported. This command will report usage to stderr
+    Consider we have a recent version if something goes wrong
     """
     try:
-        subprocess.check_output(['nvme', 'smart-log', '--verbose'])
+        result = subprocess.run(["nvme", "smart-log", "--help"], check=False, capture_output=True)
+        if not "--verbose" in str(result.stderr):
+            return False
         return True
-    except subprocess.CalledProcessError:
-        return False
+    except subprocess.CalledProcessError as exc:
+        return True
 
 
 def exec_nvme(*args):
@@ -148,7 +152,7 @@ def exec_nvme(*args):
     in child process environment so that the nvme tool does not perform any locale-specific number
     or date formatting, etc.
     """
-    cmd = ['nvme', *args]
+    cmd = ["nvme", *args]
     return subprocess.check_output(cmd, stderr=subprocess.PIPE, env=dict(os.environ, LC_ALL="C"))
 
 
@@ -204,7 +208,9 @@ def main():
                     # FIXME: The smart-log should only need to be fetched once per controller, not
                     # per namespace. However, in order to preserve legacy metric labels, fetch it
                     # per namespace anyway. Most consumer grade SSDs will only have one namespace.
-                    smart_log = exec_nvme_json("smart-log", os.path.join("/dev", device_name), has_verbose=has_verbose)
+                    smart_log = exec_nvme_json(
+                        "smart-log", os.path.join("/dev", device_name), has_verbose=has_verbose
+                    )
 
                     # Various counters in the NVMe specification are 128-bit, which would have to
                     # discard resolution if converted to a JSON number (i.e., float64_t). Instead,
@@ -232,7 +238,7 @@ def main():
                     else:
                         metrics["critical_warning"].labels(device_name).set(
                             smart_log["critical_warning"]
-                    )
+                        )
                     metrics["media_errors"].labels(device_name).inc(int(smart_log["media_errors"]))
                     metrics["num_err_log_entries"].labels(device_name).inc(
                         int(smart_log["num_err_log_entries"])
